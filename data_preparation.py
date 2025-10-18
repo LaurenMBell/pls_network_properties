@@ -86,7 +86,7 @@ def filter_by_group(data, outfile, label):
     matching_cols = [col for col in data.columns if col[1] == label]
 
     ctrl_df = data.loc[:, matching_cols]
-    ctrl_df.to_csv(outfile, index=False)
+    ctrl_df.to_csv(f"{label}_{outfile}", index=False)
     print(f"[{label}] Saved {outfile} with {len(matching_cols)} data columns")
     return ctrl_df
 
