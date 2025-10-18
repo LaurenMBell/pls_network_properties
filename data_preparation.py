@@ -14,41 +14,36 @@ pls_og_data = pd.read_excel("data/CARLONI_ORIGINAL_DATA.xlsx", header=[0,1])
 #1) normalization -> median, quantile
 #       (and turning nans into zeros)
 def median_normalization():
-    #you could put manual median normalization instead of just reading another file
-    median = pd.read_csv("data/PLS_normalized.csv") 
+    median = pd.read_csv("data/PLS_normalized.csv", header=[0,1])
     to_drop = [median.columns[1], "pls_76_13012022"]
     median.drop(columns=to_drop, inplace=True, errors='ignore')
+    
     return median
 
 def log_1(x):
     return np.log2(x + 1)
 
-def quantile_normalization(data): 
-    to_drop = [data.columns[1], "pls_76_13012022"]
-    data.drop(columns=to_drop, inplace=True, errors='ignore')
+def quantile_normalization(data):
+    numeric_cols = data.select_dtypes(include=[np.number]).columns
+    non_numeric_cols = data.select_dtypes(exclude=[np.number])
 
-    names = data.index if data.index.name else data.iloc[:, 0]
-    numeric = data._get_numeric_data()
-    log_transformed = numeric.map(log_1)
+    log_transformed = data[numeric_cols].apply(log_1)
+    qnormed_values = qnorm.quantile_normalize(log_transformed, axis=1)
+    qnormed = pd.DataFrame(qnormed_values, index=data.index, columns=numeric_cols)
 
-    named = log_transformed.copy()
-    named.insert(0, "Names", names)
-    named.to_csv(f"quantile/pls_log_transformed.csv", index=False)
+    # Merge non-numeric columns back in (preserve metabolite names)
+    qnormed_full = pd.concat([non_numeric_cols, qnormed], axis=1)
 
-    qnormed = qnorm.quantile_normalize(log_transformed, axis=1)
-    qnormed.insert(0, "", names)
-    qnormed.to_csv(f"quantile/pls_qnormed.csv", index=False)
-
-    qnormed_nans = qnormed.copy()
-    qnormed_nans[log_transformed==0] = np.nan
-    qnormed_nans.to_csv(f"quantile/pls_converted_nans.csv", index=False, na_rep="NaN")
+    # Reinsert NaNs where original zeros were
+    qnormed_nans = qnormed_full.copy()
+    qnormed_nans[log_transformed == 0] = np.nan
+    qnormed_nans.to_csv("quantile/pls_converted_nans.csv", index=False, na_rep="NaN")
     return qnormed_nans
+
     
 def median_without_zeros(median):
-    median_wo = median
-
-    median_wo[median==0] == np.nan
-
+    median_wo = median.copy()
+    median_wo[median == 0] = np.nan
     return median_wo
 
 # NORMALIZE IN BOTH WAYS
@@ -56,7 +51,9 @@ quantile = quantile_normalization(pls_og_data)
 
 median = median_normalization() #if median nomalization was actually implemented, pass it here
 median_w = median
+median_w.to_csv("median_w/median_w_preqc.csv", index=False)
 median_wo = median_without_zeros(median)
+median_wo.to_csv("median_wo/median_wo_preqc.csv", index=False)
 
 #=====================================================================================================
 #step 2: qc on each normalization variant
@@ -70,10 +67,11 @@ def filter_metabolomics(data, qc, outfile):
     # QC data - keep only rows marked "Keep"
     filtered_keep = qc[qc[3] == "Keep"]
     keep_ids = set(filtered_keep[0].astype(str))
-    data_filtered = data.loc[:, [col for col in data.columns if col[0] in keep_ids]]
 
-    data_filtered.to_csv(outfile, index=False)
-    return data_filtered
+    cols_to_keep = [col for col in data.columns if str(col[0]) in keep_ids]
+    filtered = data.loc[:, cols_to_keep]
+    filtered.to_csv(outfile, index=False)
+    return filtered
 
 filtered_quantile = filter_metabolomics(quantile, to_filter, "quantile/quantile_qc.csv")
 filtered_median_w = filter_metabolomics(median_w, to_filter, "median_w/median_w_qc.csv")
@@ -84,9 +82,15 @@ filtered_median_wo = filter_metabolomics(median_wo, to_filter, "median_wo/median
 #STEP 3: FILTERNING OUT CONTROLS
 
 def filter_by_group(data, outfile, label):
-    ctrl_df = data.loc[:, [col for col in data.columns if col[1] == label]]
+    label_row = data.columns.get_level_values(1)
+    matching_cols = [col for col in data.columns if col[1] == label]
+
+    ctrl_df = data.loc[:, matching_cols]
     ctrl_df.to_csv(outfile, index=False)
-    print(f"[{label}] Saved {outfile} with {ctrl_df.shape[1]} columns")
+    print(f"[{label}] Saved {outfile} with {len(matching_cols)} data columns")
+    return ctrl_df
+
+
 
 
 filter_by_group(filtered_quantile, "quantile/quantile_ctrls.csv", "LPS_CTRL")
